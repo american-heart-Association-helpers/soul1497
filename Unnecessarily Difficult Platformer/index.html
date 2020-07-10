@@ -1,0 +1,401 @@
+<body>
+
+<canvas id = "canvas"></canvas>
+
+<button id = "playbtn" onclick = "toggle()">Play</button>
+
+<div id = "scoreboard" style = "background-color: black; opacity: 0.8; color: yellow; font-size: 20px; font-family: sans; width: 300px; height: 150px; position: fixed; right: 50px; top: 50px"></div>
+	
+<footer style = "position: fixed; left: 0; bottom: 0">
+	<button onclick = "setSelectedObject('Wall')">Wall</button>
+	<button onclick = "setSelectedObject('Spike')">Spike</button>
+	<button onclick = "setSelectedObject('Checkpoint')">Checkpoint</button>
+</footer>
+
+</body>
+
+<script src = "https://www.google-analytics.com/analytics.js"></script>
+
+<script>
+
+function ge(e) {
+	return document.getElementById(e)
+}
+
+// Collision function (totally not pirated)
+
+function cc(shapeA, shapeB, passthrough) {
+	// get the vectors to check against
+	var vX = (shapeA.x + (shapeA.width / 2)) - (shapeB.x + (shapeB.width / 2)),
+	vY = (shapeA.y + (shapeA.height / 2)) - (shapeB.y + (shapeB.height / 2)),
+	// add the half widths and half heights of the objects
+	hWidths = (shapeA.width / 2) + (shapeB.width / 2),
+	hHeights = (shapeA.height / 2) + (shapeB.height / 2),
+	colDir = null
+		
+	// if the x and y vector are less than the half width or half height, they we must be inside the object, causing a collision
+	
+	if (Math.abs(vX) < hWidths && Math.abs(vY) < hHeights) {		 // figures out on which side we are colliding (top, bottom, left, or right)
+		var oX = hWidths - Math.abs(vX), oY = hHeights - Math.abs(vY)
+		if (oX >= oY) {
+			if (vY > 0) {
+				colDir = "t"
+				if(!passthrough) shapeA.y += oY
+			} else {
+				colDir = "b"
+				if(!passthrough) shapeA.y -= oY
+			}
+		} else {
+			if (vX > 0) {
+				colDir = "l"
+				if(!passthrough) shapeA.x += oX
+			} else {
+				colDir = "r"
+				if(!passthrough) shapeA.x -= oX
+			}
+		}
+	}
+	return colDir
+}
+
+// Basic setup
+
+width = 32*20
+height = 32*15
+gravity = 0.5
+friction = 0.9
+
+deaths = 0
+	
+// Rendering setup
+
+canvas = document.getElementById("canvas")
+ctx = canvas.getContext("2d")
+canvas.width = width
+canvas.height = height
+
+// The player
+
+player = {
+	x: 0,
+	y: 0,
+	width: 24,
+	height: 24,
+	xVel: 0,
+	yVel: 0,
+	walkAccel: 0.5,
+	runAccel: 0.5,
+	walkSpeed: 5,
+	runSpeed: 10,
+	jumpPower: 8,
+	jumpHeight: 80,
+	maxJumpHeight: 80,
+	
+	moveLeft: function() {
+		if(player.walljump == "r") return;
+		player.walking = true
+		if(player.checkSpeed()) player.xVel -= player.running ? player.runAccel : player.walkAccel
+	},
+	moveRight: function() {
+		if(player.walljump == "l") return;
+		player.walking = true
+		if(player.checkSpeed()) player.xVel += player.running ? player.runAccel : player.walkAccel
+	},
+	jump: function() {
+		if(!player.onGround && !player.jumping) return
+		if(player.onGround) {
+			player.yVel -= player.jumpPower * (1 + Math.abs(player.xVel / 30))
+			if(!player.standing) {
+				if(player.walljump == "l") {
+					f=1+(keys[39]||0)
+					player.xVel += player.jumpPower*f
+				}
+				if(player.walljump == "r") {
+					f=1+(keys[37]||0)
+					player.xVel -= player.jumpPower*f
+				}
+			}
+		}
+		player.jumpHeight--
+		player.jumping = true
+		if(player.jumpHeight <= 0) player.jumping = false
+	},
+	land: function() {
+		player.jumping = false
+		player.onGround = true
+		player.yVel = Math.min(player.yVel, 0)
+		player.jumpHeight = player.maxJumpHeight
+		keys[38] = false // have to press jump again
+	},
+	checkSpeed: function() {
+		maxSpeed = player.running ? player.runSpeed : player.walkSpeed
+		if(Math.abs(player.xVel) > maxSpeed) return false;
+		return true;
+	},
+	
+	reset: function() {
+		player.x = player.spawnX || 0
+		player.y = player.spawnY || 0
+		player.xVel = 0
+		player.yVel = 0
+		deaths++
+	}
+}
+camera = {
+	x: 0,
+	y: 0
+}
+
+// Event handling
+
+keys = []
+mouse = {}
+
+addEventListener("keydown", function(e) {
+	c = e.keyCode
+	
+	if(c == 82) {
+		player.reset()
+	}
+	
+	if(c == 38) {
+		if(player.holdingJump) return;
+		player.holdingJump = true;
+	}
+	
+	keys[c] = true
+})
+addEventListener("keyup", function(e) {
+	c = e.keyCode
+	
+	if(c == 38) player.holdingJump = false;
+	
+	if(e.ctrlKey && c == 90) currentLevel.objects.pop();
+	
+	keys[c] = false
+})
+
+addEventListener("mousemove", function(e) {
+	mouse.x = e.clientX;
+	mouse.y = e.clientY;
+	mouse.gameX = Math.floor((mouse.x + camera.x - width / 2) / 32);
+	mouse.gameY = Math.floor((mouse.y + camera.y - height / 2) / 32);
+})
+
+window.oncontextmenu = function(e) {
+	addObject(selectedObject, mouse.gameX, mouse.gameY)
+	return false;
+}
+
+// Object-spawning functions
+
+selectedObject = "Wall"
+
+function setSelectedObject(object) {
+	selectedObject = object;
+	return true;
+}
+
+function addObject(object, x, y) {
+	window["object" + object](x, y)
+}
+
+function objectWall(x, y) {
+	o = {
+		id: "wall",
+		x: x*32,
+		y: y*32,
+		width: 32,
+		height: 32,
+		color: "black",
+		solid: true,
+		stationary: true
+	}
+	
+	currentLevel.objects.push(o)
+}
+function objectSpike(x, y, w, h) {
+	o = {
+		id: "spike",
+		x: x*32,
+		y: y*32,
+		width: 32,
+		height: 32,
+		color: "gray",
+		solid: true,
+		stationary: true,
+		deadly: true
+	}
+	
+	currentLevel.objects.push(o)
+}
+function objectCheckpoint(x, y, w, h) {
+	o = {
+		id: "checkpoint",
+		x: x*32,
+		y: y*32,
+		width: 32,
+		height: 32,
+		color: "green",
+		stationary: true,
+		spawnpoint: true
+	}
+	
+	currentLevel.objects.push(o)
+}
+
+// Add objects
+
+editing = true
+
+function toggle() {
+	editing = !editing
+}
+
+// Level management
+
+function Level() {
+	this.objects = []
+}
+
+levels = []
+currentLevel = new Level()
+levelID = 0
+
+function saveLevel() {
+	levels[levelID] = currentLevel
+}
+
+function loadLevel() {
+	currentLevel = levels[levelID]
+}
+
+// Update function
+
+function update() {
+	requestAnimationFrame(update)
+	
+	// Level playing
+	
+	if(editing) {
+		player.spawnX = 0
+		player.spawnY = 0
+	}
+	else {
+		// Update player
+		
+		player.walking = false
+		
+		if(keys[32]) player.running = true; else player.running = false;
+		if(keys[37]) player.moveLeft()
+		if(keys[39]) player.moveRight()
+		if(keys[38]) player.jump(); else player.jumping = false
+		if(keys[40]) player.walljump = ""
+		
+		if(player.onGround) {
+			if(!player.walking) player.xVel *= friction
+		}
+		else player.xVel *= friction + (1 - friction) / 2
+		if(!player.jumping) {
+			player.yVel += gravity
+		}
+		else player.yVel += gravity/2
+		
+		if(player.walljump == "l") player.xVel--;
+		if(player.walljump == "r") player.xVel++;
+		
+		player.x += player.xVel
+		player.y += player.yVel
+		
+		player.onGround = false
+		player.standing = false
+		player.walljump = ""
+		
+		// Update objects
+		
+		currentLevel.objects.forEach(function(o) {
+			// Check player collisions
+				
+			c = cc(player, o, !o.solid)
+			
+			if(c && o.deadly) player.reset()
+			
+			if(c && o.spawnpoint) {
+				player.spawnX = o.x
+				player.spawnY = o.y
+			}
+			
+			if(c && o.solid) {
+				if(c == "t") {
+					player.jumping = false
+					player.yVel = 0
+				}
+				if(c == "l") {
+					player.xVel = Math.max(player.xVel, 0)
+					player.land()
+					player.walljump = "l"
+				}
+				if(c == "r") {
+					player.xVel = Math.min(player.xVel, 0)
+					player.land()
+					player.walljump = "r"
+				}
+				if(c == "b") {
+					player.standing = true
+					player.land()
+				}
+			
+				currentLevel.objects.forEach(function(p) {
+					// Don't collide with itself
+					
+					if(o == p) return
+					if(p.stationary) return
+					
+					cc(o, p)
+				})
+			}
+		})
+		
+		if(player.standing) player.walljump = ""
+		
+		// Move camera
+		
+		xDiff = player.x - camera.x
+		yDiff = player.y - camera.y
+		
+		camera.x += xDiff / 5
+		camera.y += yDiff / 5
+	}
+		
+	// Draw stuff
+	
+	ctx.clearRect(0, 0, width, height)
+	
+	ctx.fillStyle = player.walljump == "" ? "red" : "blue"
+	ctx.fillRect(player.x - camera.x + width / 2, player.y - camera.y + height / 2, player.width, player.height)
+	
+	currentLevel.objects.forEach(function(o) {
+		ctx.fillStyle = o.color
+		ctx.fillRect(o.x - camera.x + width / 2, o.y - camera.y + height / 2, o.width, o.height)
+	})
+	
+	// Update UI
+	
+	ge("playbtn").innerHTML = editing ? "Play" : "Edit"
+
+	ge("scoreboard").innerHTML = "Deaths: " + deaths
+	
+	// Save Game
+	
+	saveLevel()
+	localStorage.levelSave = JSON.stringify(levels)
+}
+
+if(localStorage.levelSave) {
+	levels = JSON.parse(localStorage.levelSave)
+	loadLevel()
+}
+	
+update()
+
+</script>
